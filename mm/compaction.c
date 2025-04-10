@@ -2206,6 +2206,7 @@ static bool should_proactive_compact_node(pg_data_t *pgdat)
 		return false;
 
 	wmark_high = fragmentation_score_wmark(false);
+	trace_android_vh_proactive_compact_wmark_high(&wmark_high);
 	return fragmentation_score_node(pgdat) > wmark_high;
 }
 
@@ -2255,8 +2256,15 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 		goto out;
 	}
 
-	if (is_via_compact_memory(cc->order))
+	if (is_via_compact_memory(cc->order)) {
+		bool compact_enough = false;
+
+		trace_android_vh_proactive_compact_stop(&compact_enough, cc);
+		if (compact_enough)
+			return COMPACT_SUCCESS;
+
 		return COMPACT_CONTINUE;
+	}
 
 	/*
 	 * Always finish scanning a pageblock to reduce the possibility of

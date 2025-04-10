@@ -3621,6 +3621,7 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 	const bool unshare = vmf->flags & FAULT_FLAG_UNSHARE;
 	struct vm_area_struct *vma = vmf->vma;
 	struct folio *folio = NULL;
+	bool can_reuse_whole_anon = false;
 
 	if (likely(!unshare)) {
 		if (userfaultfd_pte_wp(vma, ptep_get(vmf->pte))) {
@@ -3660,6 +3661,10 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 	}
 
 	trace_android_vh_do_wp_page(folio);
+
+	trace_android_vh_reuse_whole_anon_folio(folio, vmf, &can_reuse_whole_anon);
+	if (can_reuse_whole_anon)
+		return 0;
 
 	/*
 	 * Private mapping: create an exclusive anonymous page copy if reuse
@@ -4102,6 +4107,7 @@ static struct folio *alloc_swap_folio(struct vm_fault *vmf)
 
 	/* Try allocating the highest of the remaining orders. */
 	gfp = vma_thp_gfp_mask(vma);
+	trace_android_vh_alloc_swap_folio_gfp(vma, &gfp);
 	while (orders) {
 		addr = ALIGN_DOWN(vmf->address, PAGE_SIZE << order);
 		folio = vma_alloc_folio(gfp, order, vma, addr, true);
@@ -4883,6 +4889,15 @@ vm_fault_t do_set_pmd(struct vm_fault *vmf, struct page *page)
 	unsigned long haddr = vmf->address & HPAGE_PMD_MASK;
 	pmd_t entry;
 	vm_fault_t ret = VM_FAULT_FALLBACK;
+
+	/*
+	 * It is too late to allocate a small folio, we already have a large
+	 * folio in the pagecache: especially s390 KVM cannot tolerate any
+	 * PMD mappings, but PTE-mapped THP are fine. So let's simply refuse any
+	 * PMD mappings if THPs are disabled.
+	 */
+	if (thp_disabled_by_hw() || vma_thp_disabled(vma, vma->vm_flags))
+		return ret;
 
 	if (!thp_vma_suitable_order(vma, haddr, PMD_ORDER))
 		return ret;
